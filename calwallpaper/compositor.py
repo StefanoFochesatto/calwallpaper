@@ -1,10 +1,12 @@
 """
 Compositor: blurs wallpaper under the card, rasterizes SVG, and blends them into the final wallpaper.
-Alternates between output slots to force KDE Plasma texture cache invalidation.
+Alternates between output slots (wallpaper_a.png and wallpaper_b.png) to force KDE Plasma texture
+cache invalidation, while ensuring disk usage never accumulates.
 """
 
 import os
 import io
+import glob
 import datetime
 import cairosvg
 from PIL import Image, ImageFilter, ImageDraw
@@ -16,8 +18,22 @@ from .designer import generate_weekly_svg
 SLOT_FILE = os.path.join(CACHE_DIR, "current_slot.txt")
 
 
+def cleanup_old_cache_images():
+    """Ensure no stale or orphaned images accumulate in the cache directory."""
+    allowed = {"wallpaper_a.png", "wallpaper_b.png"}
+    for img_path in glob.glob(os.path.join(CACHE_DIR, "*.png")):
+        base = os.path.basename(img_path)
+        if base not in allowed:
+            try:
+                os.remove(img_path)
+            except Exception:
+                pass
+
+
 def get_next_output_path():
-    """Alternate between wallpaper_a.png and wallpaper_b.png to bypass KDE image caching."""
+    """Alternate strictly between wallpaper_a.png and wallpaper_b.png (max 2 files ever)."""
+    cleanup_old_cache_images()
+
     slot = "a"
     if os.path.exists(SLOT_FILE):
         try:
@@ -42,7 +58,6 @@ def compute_date_range(config):
     today = datetime.date.today()
 
     if start_mode == "sunday":
-        # Python weekday(): Mon=0 ... Sun=6
         idx = (today.weekday() + 1) % 7
         start_date = today - datetime.timedelta(days=idx)
     elif start_mode == "monday":
@@ -98,7 +113,7 @@ def render_composite(config=None):
     2. Fetches calendar events
     3. Builds SVG & renders to PNG
     4. Applies frosted-glass blur behind card
-    5. Composites and saves output
+    5. Composites and saves output to next alternating slot
     """
     if config is None:
         config = load_config()
