@@ -1,0 +1,43 @@
+# calwallpaper Configuration File
+# Save to: ~/.config/calwallpaper/config.yaml
+
+wallpaper:
+  source: auto                 # 'auto' to detect active KDE Plasma wallpaper, or set an absolute path
+  blur_radius: 32              # Frosted glass blur intensity behind the calendar
+  card_tint: '#080c14'         # Base glass tint color
+  card_opacity: 0.62           # Opacity of the card (0.20 to 1.0)
+  border_color: rgba(255, 255, 255, 0.16)
+
+layout:
+  position: center             # 'center', 'top', or 'bottom'
+  width_percent: 82            # Card width as % of screen width (gives balanced horizontal padding)
+  height_percent: 74           # Card height as % of screen height (gives equal top & bottom padding)
+  start_day: sunday            # 'sunday', 'monday', or 'today'
+  days_count: 7                # Number of days to display
+  time_format: 12h             # '12h' (AM/PM) or '24h'
+
+timezones:
+  primary: America/Denver      # Right timezone column in gutter
+  primary_label: MDT
+  secondary: America/Anchorage # Left timezone column in gutter
+  secondary_label: AKDT
+
+grid_hours:
+  start: 7                     # 7 AM
+  end: 21                      # 9 PM
+
+calendars:
+  - name: University / Courses
+    color: '#cfb87c'           # Hex color for event blocks & legend
+    url: 'https://calendar.google.com/calendar/ical/.../public/basic.ics'
+    enabled: true
+
+  - name: Work / Organization
+    color: '#38bdf8'
+    url: 'https://calendar.google.com/calendar/ical/.../private-token/basic.ics'
+    enabled: true
+
+  - name: Personal Schedule
+    color: '#34d399'
+    path: '~/Documents/calendar.ics'  # Local .ics files are supported
+    enabled: false

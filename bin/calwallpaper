@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Runner for calwallpaper
+VENV_DIR="$HOME/.local/share/calwallpaper/venv"
+PKG_DIR="$HOME/.local/share"
+
+if [ -f "$VENV_DIR/bin/python" ]; then
+    PYTHONPATH="$PKG_DIR:$PYTHONPATH" exec "$VENV_DIR/bin/python" -m calwallpaper "$@"
+else
+    PYTHONPATH="$PKG_DIR:$PYTHONPATH" exec python3 -m calwallpaper "$@"
+fi

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Calendar Wallpaper Settings
+Comment=Configure live weekly calendar wallpaper, colors, timezones, and sources
+Exec=/home/stefano/.local/bin/calwallpaper ui
+Icon=preferences-desktop-wallpaper
+Terminal=false
+Type=Application
+Categories=Settings;DesktopSettings;Qt;KDE;Utility;
+Keywords=calendar;wallpaper;schedule;agenda;
+StartupNotify=true

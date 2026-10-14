@@ -1,0 +1,14 @@
+[Unit]
+Description=Dynamic Weekly Calendar Wallpaper Updater
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/stefano/.local/bin/calwallpaper run
+Environment=PATH=/home/stefano/.bun/bin:/home/stefano/.local/bin:/home/stefano/honee/build:/home/stefano/ratel/bin:/home/stefano/petsc/arch-linux-c-opt/bin:/home/stefano/.local/bin:/home/stefano/.local/bin:/home/stefano/.local/share/gem/ruby/3.4.0/bin:/home/stefano/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/home/stefano/.local/share/flatpak/exports/bin:/var/lib/flatpak/exports/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+[Install]
+WantedBy=graphical-session.target
