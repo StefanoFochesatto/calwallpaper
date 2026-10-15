@@ -1,9 +1,8 @@
 """
 SVG visual generator for calwallpaper.
 Supports:
-1. Magnified Focus View: Rolling 5-week fisheye lens where the center row is the
-   current week (magnified & expanded with rich event cards), with the 2 previous
-   and 2 next weeks squeezed above and below it.
+1. Top-Magnified Week View (Original weekly layout with dual timezones & proportional
+   hourly blocks on top, with squeezed lookahead preview weeks below).
 2. Weekly Grid View (Time Blocks with Dual Timezone Gutter).
 3. Full Monthly Calendar View.
 """
@@ -35,7 +34,7 @@ def format_hour_12h(hour_24):
     elif h < 12:
         return f"{h} AM"
     elif h == 12:
-        return f"{h} PM"
+        return "12 PM"
     else:
         return f"{h - 12} PM"
 
@@ -92,21 +91,23 @@ def assign_event_slots(events):
 
 
 # =========================================================================
-# 1. MAGNIFIED FISHEYE VIEW (CENTER ROW = EXPANDED WEEK, SQUEEZED PREVIEWS)
+# 1. TOP-MAGNIFIED WEEK VIEW (HOURLY BLOCKS ON TOP + SQUEEZED PREVIEWS BELOW)
 # =========================================================================
 
-def generate_fisheye_svg(canvas_w, canvas_h, config, rolling_weeks, events_by_day, is_sample_data=False):
+def generate_top_magnified_svg(canvas_w, canvas_h, config, active_week_days, preview_weeks, events_by_day, is_sample_data=False):
     """
-    Generate the Magnifying Glass 5-week view:
-    - 5 rows: Week -2, Week -1, Center Week 0 (Magnified), Week +1, Week +2
-    - Center row is ~48% of the grid height with rich daily cards & full event details.
-    - Above and below rows are squeezed preview weeks (~13% height each).
+    Top-Magnified Layout:
+    - Top Row (Row 0): Magnified active week with original weekly layout:
+      Dual timezones (AKDT | MDT) on left, 7 day columns, proportional hourly blocks.
+    - Bottom Section: Squeezed upcoming preview weeks aligned directly beneath.
     """
     layout = config.get("layout", {})
     wallpaper_cfg = config.get("wallpaper", {})
+    tz_cfg = config.get("timezones", {})
+    grid_cfg = config.get("grid_hours", {})
 
     w_pct = layout.get("width_percent", 88) / 100.0
-    h_pct = layout.get("height_percent", 84) / 100.0
+    h_pct = layout.get("height_percent", 86) / 100.0
 
     card_w = int(canvas_w * w_pct)
     card_h = int(canvas_h * h_pct)
@@ -123,26 +124,70 @@ def generate_fisheye_svg(canvas_w, canvas_h, config, rolling_weeks, events_by_da
 
     font_family = "system-ui, -apple-system, 'Cantarell', 'DejaVu Sans', sans-serif"
 
-    today = datetime.date.today()
+    # Timezones
+    primary_tz_name = tz_cfg.get("primary", "America/Denver")
+    primary_label = tz_cfg.get("primary_label", "MDT")
+    secondary_tz_name = tz_cfg.get("secondary", "America/Anchorage")
+    secondary_label = tz_cfg.get("secondary_label", "AKDT")
+
+    try:
+        primary_tz = ZoneInfo(primary_tz_name)
+    except Exception:
+        primary_tz = ZoneInfo("America/Denver")
+
+    try:
+        secondary_tz = ZoneInfo(secondary_tz_name)
+    except Exception:
+        secondary_tz = ZoneInfo("America/Anchorage")
+
+    now = datetime.datetime.now(primary_tz)
+    today = now.date()
     full_month_str = today.strftime("%B %Y")
 
-    pad_x = int(24 * scale)
-    pad_top = int(20 * scale)
-    pad_bottom = int(20 * scale)
+    # Determine Grid Hours for active week
+    grid_start_h = grid_cfg.get("start", 7)
+    grid_end_h = grid_cfg.get("end", 20)
 
-    header_h = int(54 * scale)
-    day_header_h = int(32 * scale)
+    for day_d in active_week_days:
+        d_key = day_d.strftime("%Y-%m-%d")
+        for ev in events_by_day.get(d_key, []):
+            if not ev.get("all_day", False):
+                s_h = ev["start_minutes"] // 60
+                e_h = (ev["end_minutes"] + 59) // 60
+                grid_start_h = min(grid_start_h, s_h)
+                grid_end_h = max(grid_end_h, e_h)
+
+    total_hours = grid_end_h - grid_start_h
+    total_grid_minutes = total_hours * 60
+
+    pad_x = int(24 * scale)
+    pad_top = int(18 * scale)
+    pad_bottom = int(18 * scale)
+
+    header_h = int(50 * scale)
+    day_header_h = int(54 * scale)
+
+    gutter_w = int(106 * scale)
+    sub_col_w = gutter_w // 2
 
     num_cols = 7
     grid_w = card_w - (pad_x * 2)
-    grid_top_y = pad_top + header_h + day_header_h
-    grid_h = card_h - grid_top_y - pad_bottom
+    col_w = (grid_w - gutter_w) // num_cols
 
-    col_w = grid_w // num_cols
+    # Vertical split: Top week takes ~67% of grid space, bottom previews take ~33%
+    total_avail_h = card_h - (pad_top + header_h + pad_bottom)
+    top_section_h = int(total_avail_h * 0.67)
 
-    # Vertical split: Center row is magnified (48% of grid_h), 4 previews are squeezed (13% each)
-    center_row_h = int(grid_h * 0.48)
-    preview_row_h = (grid_h - center_row_h) / 4.0
+    # Divider bar between top magnified week and preview weeks
+    preview_divider_h = int(24 * scale)
+    preview_section_h = total_avail_h - top_section_h - preview_divider_h
+
+    num_preview_weeks = len(preview_weeks)
+    preview_row_h = preview_section_h / float(max(1, num_preview_weeks))
+
+    top_grid_top_y = pad_top + header_h + day_header_h
+    top_grid_h = top_section_h - day_header_h
+    hour_h = top_grid_h / float(total_hours)
 
     svg = []
     svg.append(f'<svg width="{canvas_w}" height="{canvas_h}" viewBox="0 0 {canvas_w} {canvas_h}" xmlns="http://www.w3.org/2000/svg">')
@@ -155,33 +200,29 @@ def generate_fisheye_svg(canvas_w, canvas_h, config, rolling_weeks, events_by_da
         <stop offset="0%" stop-color="#ffffff" stop-opacity="0.06"/>
         <stop offset="100%" stop-color="#ffffff" stop-opacity="0.00"/>
       </linearGradient>
-      <linearGradient id="lensGlow" x1="0%" y1="0%" x2="0%" y2="100%">
-        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.10"/>
-        <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.03"/>
-        <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.10"/>
+      <linearGradient id="topWeekGlow" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.05"/>
+        <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.01"/>
       </linearGradient>
     """)
     svg.append('</defs>')
 
     svg.append(f'<g transform="translate({card_x}, {card_y})" filter="url(#cardGlow)">')
 
-    # Card background
     rx = int(22 * scale)
     svg.append(f'<rect x="0" y="0" width="{card_w}" height="{card_h}" rx="{rx}" fill="{tint}" fill-opacity="{opacity}" stroke="{border_color}" stroke-width="{max(1, int(1.5 * scale))}"/>')
-    svg.append(f'<rect x="0" y="0" width="{card_w}" height="{int(card_h * 0.22)}" rx="{rx}" fill="url(#headerShine)"/>')
+    svg.append(f'<rect x="0" y="0" width="{card_w}" height="{int(card_h * 0.20)}" rx="{rx}" fill="url(#headerShine)"/>')
 
-    # Top Header
-    header_font_size = int(25 * scale)
+    # ================= CARD TOP HEADER =================
+    header_font_size = int(24 * scale)
     svg.append(f'<text x="{pad_x}" y="{pad_top + header_font_size}" font-family="{font_family}" font-size="{header_font_size}" font-weight="700" fill="#f8fafc" letter-spacing="-0.5">{escape(full_month_str)}</text>')
 
-    # Active week range
-    center_week = rolling_weeks[2]
-    w_start_str = center_week[0].strftime("%b %-d")
-    w_end_str = center_week[-1].strftime("%b %-d, %Y")
+    start_d_str = active_week_days[0].strftime("%b %-d")
+    end_d_str = active_week_days[-1].strftime("%b %-d, %Y")
     sub_font_size = int(13 * scale)
-    svg.append(f'<text x="{pad_x}" y="{pad_top + header_font_size + int(18 * scale)}" font-family="{font_family}" font-size="{sub_font_size}" font-weight="500" fill="#94a3b8">Active Week: {escape(w_start_str)} – {escape(w_end_str)} · 5-Week Focus Lens</text>')
+    svg.append(f'<text x="{pad_x}" y="{pad_top + header_font_size + int(18 * scale)}" font-family="{font_family}" font-size="{sub_font_size}" font-weight="500" fill="#94a3b8">Active Week: {escape(start_d_str)} – {escape(end_d_str)} · Hourly Time Blocks &amp; Previews</text>')
 
-    # Legend Badges on Right
+    # Calendar Legends on Right
     active_cals = [c for c in config.get("calendars", []) if c.get("enabled", True) and (c.get("url") or c.get("path"))]
     legend_y = pad_top + header_font_size
     cur_legend_x = card_w - pad_x
@@ -197,193 +238,221 @@ def generate_fisheye_svg(canvas_w, canvas_h, config, rolling_weeks, events_by_da
     sep_y = pad_top + header_h
     svg.append(f'<line x1="{pad_x}" y1="{sep_y}" x2="{card_w - pad_x}" y2="{sep_y}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
 
-    # Day Names Header Row (SUN, MON, TUE, WED, THU, FRI, SAT)
-    start_mode = layout.get("start_day", "sunday").lower()
-    if start_mode == "monday":
-        day_names = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
-    else:
-        day_names = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
-
+    # =========================================================================
+    # PART 1: TOP MAGNIFIED WEEK (ROW 0 - ORIGINAL WEEKLY TIME BLOCKS LAYOUT)
+    # =========================================================================
+    gutter_x = pad_x
     day_header_y = sep_y + int(4 * scale)
-    for c_idx, d_name in enumerate(day_names):
-        c_x = pad_x + (c_idx * col_w)
-        center_x = c_x + (col_w // 2)
-        svg.append(f'<text x="{center_x}" y="{day_header_y + int(18 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(12 * scale)}" font-weight="600" fill="#94a3b8" letter-spacing="0.5">{escape(d_name)}</text>')
 
-    svg.append(f'<line x1="{pad_x}" y1="{grid_top_y}" x2="{card_w - pad_x}" y2="{grid_top_y}" stroke="rgba(255, 255, 255, 0.12)" stroke-width="1.2"/>')
+    # Magnified week background glow
+    svg.append(f'<rect x="{pad_x}" y="{sep_y}" width="{grid_w}" height="{top_section_h}" fill="url(#topWeekGlow)"/>')
 
-    # Calculate Y-position and Height for each of the 5 rows
-    row_y_list = []
-    row_h_list = []
-    cur_y = grid_top_y
-    for r_idx in range(5):
-        h = center_row_h if r_idx == 2 else preview_row_h
-        row_y_list.append(cur_y)
-        row_h_list.append(h)
-        cur_y += h
+    # Dual Timezone Gutter Header (Left column: AKDT, Right column: MDT)
+    tz1_center_x = gutter_x + (sub_col_w // 2)
+    svg.append(f'<text x="{tz1_center_x}" y="{day_header_y + int(22 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(11 * scale)}" font-weight="700" fill="#64748b" letter-spacing="0.5">{escape(secondary_label)}</text>')
+    svg.append(f'<text x="{tz1_center_x}" y="{day_header_y + int(38 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(9.5 * scale)}" font-weight="500" fill="#475569">GMT-8</text>')
 
-    # ================= RENDER ROWS =================
-    for r_idx, week in enumerate(rolling_weeks):
-        cell_y = row_y_list[r_idx]
-        cur_row_h = row_h_list[r_idx]
-        is_center_row = (r_idx == 2)
+    tz2_center_x = gutter_x + sub_col_w + (sub_col_w // 2)
+    svg.append(f'<text x="{tz2_center_x}" y="{day_header_y + int(22 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(11 * scale)}" font-weight="700" fill="#38bdf8" letter-spacing="0.5">{escape(primary_label)}</text>')
+    svg.append(f'<text x="{tz2_center_x}" y="{day_header_y + int(38 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(9.5 * scale)}" font-weight="500" fill="#0284c7">GMT-6</text>')
 
-        # Magnified Center Row Lens Background & Framing
-        if is_center_row:
-            svg.append(f'<rect x="{pad_x}" y="{cell_y}" width="{grid_w}" height="{cur_row_h}" fill="url(#lensGlow)"/>')
-            # Glowing border lines top & bottom
-            svg.append(f'<line x1="{pad_x}" y1="{cell_y}" x2="{card_w - pad_x}" y2="{cell_y}" stroke="rgba(56, 189, 248, 0.45)" stroke-width="2"/>')
-            svg.append(f'<line x1="{pad_x}" y1="{cell_y + cur_row_h}" x2="{card_w - pad_x}" y2="{cell_y + cur_row_h}" stroke="rgba(56, 189, 248, 0.45)" stroke-width="2"/>')
-        elif r_idx > 0 and r_idx != 3:
-            # Subtle divider for preview rows
-            svg.append(f'<line x1="{pad_x}" y1="{cell_y}" x2="{card_w - pad_x}" y2="{cell_y}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
+    # Gutter vertical divider lines
+    svg.append(f'<line x1="{gutter_x + sub_col_w}" y1="{day_header_y + int(8 * scale)}" x2="{gutter_x + sub_col_w}" y2="{top_grid_top_y + top_grid_h}" stroke="rgba(255, 255, 255, 0.05)" stroke-width="1"/>')
+    svg.append(f'<line x1="{gutter_x + gutter_w}" y1="{day_header_y}" x2="{gutter_x + gutter_w}" y2="{top_grid_top_y + top_grid_h}" stroke="rgba(255, 255, 255, 0.14)" stroke-width="1.2"/>')
 
-        for c_idx, d_obj in enumerate(week):
-            cell_x = pad_x + (c_idx * col_w)
-            is_today = (d_obj == today)
+    # 7 Day Headers for Top Magnified Week
+    for i, d_obj in enumerate(active_week_days):
+        col_x = gutter_x + gutter_w + (i * col_w)
+        is_today = (d_obj == today)
 
-            # Vertical separator lines
-            if c_idx > 0 and r_idx == 0:
-                svg.append(f'<line x1="{cell_x}" y1="{grid_top_y}" x2="{cell_x}" y2="{grid_top_y + grid_h}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
+        day_name = d_obj.strftime("%a").upper()
+        day_num = d_obj.strftime("%-d")
 
-            date_key = d_obj.strftime("%Y-%m-%d")
-            cell_events = events_by_day.get(date_key, [])
-            date_num_str = str(d_obj.day)
+        center_x = col_x + (col_w // 2)
+        name_color = "#3b82f6" if is_today else "#94a3b8"
+        svg.append(f'<text x="{center_x}" y="{day_header_y + int(18 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(12 * scale)}" font-weight="600" fill="{name_color}" letter-spacing="0.5">{escape(day_name)}</text>')
 
-            # -------------------------------------------------------------
-            # A. CENTER ROW: MAGNIFIED / EXPANDED WEEK (THE FOCAL POINT)
-            # -------------------------------------------------------------
-            if is_center_row:
-                # Column highlight for today
-                if is_today:
-                    svg.append(f'<rect x="{cell_x + 1}" y="{cell_y + 1}" width="{col_w - 2}" height="{cur_row_h - 2}" fill="rgba(37, 99, 235, 0.12)"/>')
+        num_y = day_header_y + int(40 * scale)
+        if is_today:
+            circle_r = int(15 * scale)
+            svg.append(f'<circle cx="{center_x}" cy="{num_y - int(4 * scale)}" r="{circle_r}" fill="#2563eb"/>')
+            svg.append(f'<text x="{center_x}" y="{num_y + int(1 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(14 * scale)}" font-weight="700" fill="#ffffff">{escape(day_num)}</text>')
+        else:
+            svg.append(f'<text x="{center_x}" y="{num_y + int(1 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(15 * scale)}" font-weight="600" fill="#e2e8f0">{escape(day_num)}</text>')
 
-                # Day Header inside the expanded cell
-                center_header_y = cell_y + int(24 * scale)
-                num_x = cell_x + col_w - int(16 * scale)
+        # Vertical line separating days in top week
+        if i > 0:
+            svg.append(f'<line x1="{col_x}" y1="{day_header_y}" x2="{col_x}" y2="{top_grid_top_y + top_grid_h}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
 
-                # Day name on top left of cell
-                day_name_str = d_obj.strftime("%a").upper()
-                day_name_col = "#38bdf8" if is_today else "#94a3b8"
-                svg.append(f'<text x="{cell_x + int(10 * scale)}" y="{center_header_y}" font-family="{font_family}" font-size="{int(12 * scale)}" font-weight="700" fill="{day_name_col}">{day_name_str}</text>')
+    svg.append(f'<line x1="{gutter_x}" y1="{top_grid_top_y}" x2="{card_w - pad_x}" y2="{top_grid_top_y}" stroke="rgba(255, 255, 255, 0.12)" stroke-width="1.2"/>')
 
-                # Date number (Top Right)
-                if is_today:
-                    circle_r = int(14 * scale)
-                    svg.append(f'<circle cx="{num_x}" cy="{center_header_y - int(4 * scale)}" r="{circle_r}" fill="#2563eb"/>')
-                    svg.append(f'<text x="{num_x}" y="{center_header_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(13 * scale)}" font-weight="700" fill="#ffffff">{escape(date_num_str)}</text>')
-                else:
-                    svg.append(f'<text x="{num_x}" y="{center_header_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(14 * scale)}" font-weight="700" fill="#f8fafc">{escape(date_num_str)}</text>')
+    # Top Week: Hourly Grid Lines & Timezone Hour Labels
+    today_ref = datetime.date.today()
+    for h_idx in range(total_hours + 1):
+        hour_24 = grid_start_h + h_idx
+        y_pos = top_grid_top_y + (h_idx * hour_h)
 
-                # Divider under day header in center row
-                svg.append(f'<line x1="{cell_x + int(8 * scale)}" y1="{center_header_y + int(10 * scale)}" x2="{cell_x + col_w - int(8 * scale)}" y2="{center_header_y + int(10 * scale)}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
+        line_color = "rgba(255, 255, 255, 0.08)" if h_idx > 0 else "rgba(255, 255, 255, 0.12)"
+        svg.append(f'<line x1="{gutter_x}" y1="{y_pos}" x2="{card_w - pad_x}" y2="{y_pos}" stroke="{line_color}" stroke-width="1"/>')
 
-                # Rich Event Cards in the Magnified Row
-                chips_start_y = center_header_y + int(20 * scale)
-                chip_h = int(28 * scale)
-                chip_gap = int(6 * scale)
+        if h_idx < total_hours:
+            dt_primary = datetime.datetime(today_ref.year, today_ref.month, today_ref.day, hour_24 % 24, 0, tzinfo=primary_tz)
+            dt_secondary = dt_primary.astimezone(secondary_tz)
 
-                avail_h = cur_row_h - int(65 * scale)
-                max_chips_fit = max(1, int(avail_h // (chip_h + chip_gap)))
+            time_str_primary = format_hour_12h(dt_primary.hour)
+            time_str_secondary = format_hour_12h(dt_secondary.hour)
 
-                rendered_chips = cell_events[:max_chips_fit]
-                overflow = len(cell_events) - max_chips_fit
+            text_y = y_pos + int(14 * scale)
+            svg.append(f'<text x="{tz1_center_x}" y="{text_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(10.5 * scale)}" font-weight="500" fill="#64748b">{escape(time_str_secondary)}</text>')
+            svg.append(f'<text x="{tz2_center_x}" y="{text_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(11 * scale)}" font-weight="600" fill="#94a3b8">{escape(time_str_primary)}</text>')
 
-                if not cell_events:
-                    empty_y = chips_start_y + int(40 * scale)
-                    cell_mid_x = cell_x + (col_w // 2)
-                    svg.append(f'<text x="{cell_mid_x}" y="{empty_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(11 * scale)}" fill="#475569" font-style="italic">No events</text>')
-                else:
-                    for ev_i, ev in enumerate(rendered_chips):
-                        ey = chips_start_y + (ev_i * (chip_h + chip_gap))
-                        ew = col_w - int(12 * scale)
-                        ex = cell_x + int(6 * scale)
-                        erx = int(5 * scale)
+    # Top Week: Proportional Hourly Event Blocks
+    min_grid_m = grid_start_h * 60
+    max_grid_m = grid_end_h * 60
 
-                        color = ev.get("color", "#38bdf8")
-                        title = ev.get("title", "Event")
-                        time_str = ev.get("start_time_str", "")
+    for i, d_obj in enumerate(active_week_days):
+        col_x = gutter_x + gutter_w + (i * col_w)
+        d_key = d_obj.strftime("%Y-%m-%d")
+        is_today = (d_obj == today)
 
-                        # Card background
-                        svg.append(f'<rect x="{ex}" y="{ey}" width="{ew}" height="{chip_h}" rx="{erx}" fill="rgba(15, 23, 42, 0.75)" stroke="rgba(255, 255, 255, 0.12)" stroke-width="1"/>')
+        # Today subtle column tint
+        if is_today:
+            svg.append(f'<rect x="{col_x + 1}" y="{top_grid_top_y + 1}" width="{col_w - 2}" height="{top_grid_h - 2}" fill="rgba(37, 99, 235, 0.08)"/>')
 
-                        # Left solid accent bar (4px)
-                        svg.append(f'<path d="M {ex} {ey + erx} A {erx} {erx} 0 0 1 {ex + erx} {ey} L {ex + int(4 * scale)} {ey} L {ex + int(4 * scale)} {ey + chip_h} L {ex + erx} {ey + chip_h} A {erx} {erx} 0 0 1 {ex} {ey + chip_h - erx} Z" fill="{color}"/>')
+        cell_events = events_by_day.get(d_key, [])
+        timed_events = [e for e in cell_events if not e.get("all_day", False)]
+        slotted_events = assign_event_slots(timed_events)
 
-                        text_x = ex + int(10 * scale)
-                        text_y = ey + int(18 * scale)
+        for ev in slotted_events:
+            s_m = ev["start_minutes"]
+            e_m = ev["end_minutes"]
 
-                        if time_str and time_str != "All Day":
-                            time_w_approx = int(len(time_str) * 7.0 * scale) + int(10 * scale)
-                            svg.append(f'<text x="{text_x}" y="{text_y}" font-family="{font_family}" font-size="{int(11 * scale)}" font-weight="700" fill="{color}">{escape(time_str)}</text>')
-                            title_x = text_x + time_w_approx
-                            max_title_chars = max(6, int((ew - time_w_approx - int(16 * scale)) / (7.5 * scale)))
-                            clean_title = truncate(title, max_title_chars)
-                            svg.append(f'<text x="{title_x}" y="{text_y}" font-family="{font_family}" font-size="{int(11.5 * scale)}" font-weight="600" fill="#f8fafc">· {escape(clean_title)}</text>')
-                        else:
-                            max_title_chars = max(8, int((ew - int(20 * scale)) / (7.5 * scale)))
-                            clean_title = truncate(title, max_title_chars)
-                            svg.append(f'<text x="{text_x}" y="{text_y}" font-family="{font_family}" font-size="{int(11.5 * scale)}" font-weight="600" fill="#f8fafc">{escape(clean_title)}</text>')
+            if e_m <= min_grid_m or s_m >= max_grid_m:
+                continue
 
-                    if overflow > 0:
-                        more_y = chips_start_y + (max_chips_fit * (chip_h + chip_gap)) + int(14 * scale)
-                        cell_mid_x = cell_x + (col_w // 2)
-                        svg.append(f'<text x="{cell_mid_x}" y="{more_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(11 * scale)}" font-weight="600" fill="#94a3b8">+{overflow} more</text>')
+            clamp_start = max(min_grid_m, s_m)
+            clamp_end = min(max_grid_m, e_m)
 
-            # -------------------------------------------------------------
-            # B. PREVIEW ROWS (SQUEEZED WEEKS: -2, -1, +1, +2)
-            # -------------------------------------------------------------
+            top_offset = ((clamp_start - min_grid_m) / float(total_grid_minutes)) * top_grid_h
+            event_dur_m = clamp_end - clamp_start
+            event_h = max(int(22 * scale), (event_dur_m / float(total_grid_minutes)) * top_grid_h - int(2 * scale))
+
+            slot_idx = ev.get("slot_idx", 0)
+            num_slots = ev.get("num_slots", 1)
+
+            slot_w = (col_w - int(8 * scale)) / float(num_slots)
+            ev_x = col_x + int(4 * scale) + (slot_idx * slot_w)
+            ev_y = top_grid_top_y + top_offset
+            ev_w = slot_w - int(3 * scale)
+
+            color = ev.get("color", "#38bdf8")
+            title = ev.get("title", "Event")
+            time_label = f"{ev.get('start_time_str', '')} – {ev.get('end_time_str', '')}"
+
+            card_rx = int(5 * scale)
+            svg.append(f'<rect x="{ev_x}" y="{ev_y}" width="{ev_w}" height="{event_h}" rx="{card_rx}" fill="{color}" fill-opacity="0.78" stroke="rgba(255, 255, 255, 0.25)" stroke-width="1"/>')
+            svg.append(f'<path d="M {ev_x} {ev_y + card_rx} A {card_rx} {card_rx} 0 0 1 {ev_x + card_rx} {ev_y} L {ev_x + int(4 * scale)} {ev_y} L {ev_x + int(4 * scale)} {ev_y + event_h} L {ev_x + card_rx} {ev_y + event_h} A {card_rx} {card_rx} 0 0 1 {ev_x} {ev_y + event_h - card_rx} Z" fill="#ffffff" fill-opacity="0.6"/>')
+
+            text_pad_x = ev_x + int(8 * scale)
+            max_char_len = max(6, int(ev_w / (7.5 * scale)))
+
+            if event_h >= int(38 * scale):
+                svg.append(f'<text x="{text_pad_x}" y="{ev_y + int(14 * scale)}" font-family="{font_family}" font-size="{int(11.5 * scale)}" font-weight="700" fill="#ffffff">{escape(truncate(title, max_char_len))}</text>')
+                svg.append(f'<text x="{text_pad_x}" y="{ev_y + int(28 * scale)}" font-family="{font_family}" font-size="{int(9.5 * scale)}" font-weight="500" fill="rgba(255, 255, 255, 0.85)">{escape(time_label)}</text>')
             else:
-                num_x = cell_x + col_w - int(14 * scale)
-                num_y = cell_y + int(18 * scale)
+                svg.append(f'<text x="{text_pad_x}" y="{ev_y + int(15 * scale)}" font-family="{font_family}" font-size="{int(10.5 * scale)}" font-weight="700" fill="#ffffff">{escape(truncate(title, max_char_len))}</text>')
 
-                # Month prefix if 1st of month
-                if d_obj.day == 1:
-                    prefix_month = d_obj.strftime("%b ")
-                    svg.append(f'<text x="{cell_x + int(8 * scale)}" y="{num_y - int(2 * scale)}" font-family="{font_family}" font-size="{int(10.5 * scale)}" font-weight="700" fill="#64748b">{prefix_month}</text>')
+    # =========================================================================
+    # PART 2: SECTION DIVIDER (BETWEEN TOP MAGNIFIED WEEK & PREVIEWS)
+    # =========================================================================
+    div_y = top_grid_top_y + top_grid_h + int(10 * scale)
+    svg.append(f'<line x1="{pad_x}" y1="{div_y}" x2="{card_w - pad_x}" y2="{div_y}" stroke="rgba(56, 189, 248, 0.35)" stroke-width="1.5"/>')
 
-                # Squeezed date number
-                date_color = "#94a3b8" if d_obj.month == today.month else "#475569"
-                svg.append(f'<text x="{num_x}" y="{num_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(11 * scale)}" font-weight="600" fill="{date_color}">{escape(date_num_str)}</text>')
+    div_text_y = div_y + int(14 * scale)
+    svg.append(f'<text x="{gutter_x + int(6 * scale)}" y="{div_text_y}" font-family="{font_family}" font-size="{int(10.5 * scale)}" font-weight="700" fill="#38bdf8" letter-spacing="1">UPCOMING WEEKS PREVIEW</text>')
 
-                # Compact Event Chips in Squeezed Rows
-                chips_start_y = cell_y + int(24 * scale)
-                chip_h = int(18 * scale)
-                chip_gap = int(3 * scale)
+    preview_grid_start_y = div_y + preview_divider_h
 
-                avail_h = cur_row_h - int(28 * scale)
-                max_chips_fit = max(1, int(avail_h // (chip_h + chip_gap)))
+    # =========================================================================
+    # PART 3: SQUEEZED PREVIEW WEEKS (ROWS 1 & 2 DIRECTLY BENEATH)
+    # =========================================================================
+    for pw_idx, pw_days in enumerate(preview_weeks):
+        pw_y = preview_grid_start_y + (pw_idx * preview_row_h)
 
-                rendered_chips = cell_events[:max_chips_fit]
-                overflow = len(cell_events) - max_chips_fit
+        # Horizontal divider between preview weeks
+        if pw_idx > 0:
+            svg.append(f'<line x1="{pad_x}" y1="{pw_y}" x2="{card_w - pad_x}" y2="{pw_y}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
 
-                for ev_i, ev in enumerate(rendered_chips):
-                    ey = chips_start_y + (ev_i * (chip_h + chip_gap))
-                    ew = col_w - int(10 * scale)
-                    ex = cell_x + int(5 * scale)
-                    erx = int(3 * scale)
+        # Left Gutter Label for Preview Week
+        pw_label = "NEXT WEEK" if pw_idx == 0 else f"+{pw_idx + 1} WEEKS"
+        pw_range = f"{pw_days[0].strftime('%b %-d')}–{pw_days[-1].strftime('%-d')}"
+        gutter_mid_x = gutter_x + (gutter_w // 2)
 
-                    color = ev.get("color", "#38bdf8")
-                    title = ev.get("title", "Event")
-                    time_str = ev.get("start_time_str", "")
+        svg.append(f'<text x="{gutter_mid_x}" y="{pw_y + int(24 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(10.5 * scale)}" font-weight="700" fill="#38bdf8" letter-spacing="0.5">{pw_label}</text>')
+        svg.append(f'<text x="{gutter_mid_x}" y="{pw_y + int(38 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(9.5 * scale)}" font-weight="500" fill="#64748b">{pw_range}</text>')
 
-                    if time_str and time_str != "All Day":
-                        chip_text = f"{time_str} {title}"
-                    else:
-                        chip_text = title
+        # Gutter divider for preview row
+        svg.append(f'<line x1="{gutter_x + gutter_w}" y1="{pw_y}" x2="{gutter_x + gutter_w}" y2="{pw_y + preview_row_h}" stroke="rgba(255, 255, 255, 0.12)" stroke-width="1.2"/>')
 
-                    max_chars = max(6, int(ew / (7.0 * scale)))
-                    clean_text = truncate(chip_text, max_chars)
+        # 7 Days in Preview Week
+        for col_i, d_obj in enumerate(pw_days):
+            cell_x = gutter_x + gutter_w + (col_i * col_w)
 
-                    # Compact chip
-                    svg.append(f'<rect x="{ex}" y="{ey}" width="{ew}" height="{chip_h}" rx="{erx}" fill="{color}" fill-opacity="0.75"/>')
-                    svg.append(f'<rect x="{ex}" y="{ey}" width="{int(2.5 * scale)}" height="{chip_h}" rx="{int(1 * scale)}" fill="#ffffff" fill-opacity="0.6"/>')
-                    svg.append(f'<text x="{ex + int(5 * scale)}" y="{ey + int(13 * scale)}" font-family="{font_family}" font-size="{int(9.5 * scale)}" font-weight="600" fill="#ffffff">{escape(clean_text)}</text>')
+            # Vertical column line
+            if col_i > 0:
+                svg.append(f'<line x1="{cell_x}" y1="{pw_y}" x2="{cell_x}" y2="{pw_y + preview_row_h}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
 
-                if overflow > 0:
-                    more_y = chips_start_y + (max_chips_fit * (chip_h + chip_gap)) + int(9 * scale)
-                    cell_mid_x = cell_x + (col_w // 2)
-                    svg.append(f'<text x="{cell_mid_x}" y="{more_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(9 * scale)}" font-weight="600" fill="#64748b">+{overflow} more</text>')
+            # Date number in top-right
+            num_x = cell_x + col_w - int(12 * scale)
+            num_y = pw_y + int(18 * scale)
+
+            if d_obj.day == 1:
+                prefix = d_obj.strftime("%b ")
+                svg.append(f'<text x="{cell_x + int(8 * scale)}" y="{num_y - int(1 * scale)}" font-family="{font_family}" font-size="{int(10.5 * scale)}" font-weight="700" fill="#38bdf8">{prefix}</text>')
+
+            date_col = "#e2e8f0" if d_obj.month == today.month else "#64748b"
+            svg.append(f'<text x="{num_x}" y="{num_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(11 * scale)}" font-weight="600" fill="{date_col}">{d_obj.day}</text>')
+
+            # Preview Event Chips
+            d_key = d_obj.strftime("%Y-%m-%d")
+            cell_evs = events_by_day.get(d_key, [])
+
+            chip_h = int(20 * scale)
+            chip_gap = int(4 * scale)
+            chips_start_y = pw_y + int(24 * scale)
+
+            avail_h = preview_row_h - int(28 * scale)
+            max_chips_fit = max(1, int(avail_h // (chip_h + chip_gap)))
+
+            rendered_chips = cell_evs[:max_chips_fit]
+            overflow = len(cell_evs) - max_chips_fit
+
+            for ci, ev in enumerate(rendered_chips):
+                ey = chips_start_y + (ci * (chip_h + chip_gap))
+                ew = col_w - int(10 * scale)
+                ex = cell_x + int(5 * scale)
+                erx = int(3 * scale)
+
+                color = ev.get("color", "#38bdf8")
+                title = ev.get("title", "Event")
+                time_str = ev.get("start_time_str", "")
+
+                if time_str and time_str != "All Day":
+                    chip_text = f"{time_str} {title}"
+                else:
+                    chip_text = title
+
+                max_chars = max(6, int(ew / (7.0 * scale)))
+                clean_text = truncate(chip_text, max_chars)
+
+                svg.append(f'<rect x="{ex}" y="{ey}" width="{ew}" height="{chip_h}" rx="{erx}" fill="{color}" fill-opacity="0.75"/>')
+                svg.append(f'<rect x="{ex}" y="{ey}" width="{int(2.5 * scale)}" height="{chip_h}" rx="{int(1 * scale)}" fill="#ffffff" fill-opacity="0.6"/>')
+                svg.append(f'<text x="{ex + int(6 * scale)}" y="{ey + int(14 * scale)}" font-family="{font_family}" font-size="{int(10 * scale)}" font-weight="600" fill="#ffffff">{escape(clean_text)}</text>')
+
+            if overflow > 0:
+                more_y = chips_start_y + (max_chips_fit * (chip_h + chip_gap)) + int(10 * scale)
+                cell_mid_x = cell_x + (col_w // 2)
+                svg.append(f'<text x="{cell_mid_x}" y="{more_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(9.5 * scale)}" font-weight="600" fill="#64748b">+{overflow} more</text>')
 
     svg.append('</g>')
     svg.append('</svg>')
@@ -392,7 +461,7 @@ def generate_fisheye_svg(canvas_w, canvas_h, config, rolling_weeks, events_by_da
 
 
 # =========================================================================
-# 2. WEEKLY GRID VIEW (TIME BLOCKS WITH DUAL TIMEZONES)
+# 2. STANDALONE FULL MONTHLY CALENDAR VIEW
 # =========================================================================
 
 def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=False):
@@ -721,6 +790,7 @@ def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=Fa
 # =========================================================================
 # 3. FULL STANDALONE MONTHLY CALENDAR VIEW
 # =========================================================================
+
 
 def generate_monthly_svg(canvas_w, canvas_h, config, month_weeks, events_by_day, is_sample_data=False):
     """Generate standalone full monthly calendar grid SVG."""

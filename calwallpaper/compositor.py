@@ -1,7 +1,8 @@
 """
 Compositor: blurs wallpaper under the card, rasterizes SVG, and blends them into the final wallpaper.
 Supports:
-1. Fisheye / Focus View: 5-week rolling calendar where the center row is the magnified active week.
+1. Top-Magnified View: Original weekly time blocks layout on top row with dual timezones,
+   with squeezed lookahead preview weeks directly below.
 2. Weekly View: Google Calendar-style time grid with dual timezone gutter.
 3. Monthly View: Standalone full month grid with daily event cards.
 """
@@ -16,7 +17,7 @@ from PIL import Image, ImageFilter, ImageDraw
 
 from .config import load_config, get_current_plasma_wallpaper, CACHE_DIR
 from .fetcher import aggregate_calendars
-from .designer import generate_weekly_svg, generate_monthly_svg, generate_fisheye_svg
+from .designer import generate_weekly_svg, generate_monthly_svg, generate_top_magnified_svg
 
 SLOT_FILE = os.path.join(CACHE_DIR, "current_slot.txt")
 
@@ -113,7 +114,7 @@ def render_composite(config=None):
     """
     Main pipeline:
     1. Loads base wallpaper
-    2. Determines view mode (fisheye vs week vs month)
+    2. Determines view mode (top_magnified vs week vs month)
     3. Fetches calendar events for view range
     4. Builds SVG & renders to PNG
     5. Applies frosted-glass blur behind card
@@ -126,9 +127,9 @@ def render_composite(config=None):
     canvas_w, canvas_h = base_img.size
 
     layout = config.get("layout", {})
-    view_mode = layout.get("view", "fisheye").lower()
+    view_mode = layout.get("view", "top_magnified").lower()
 
-    if view_mode in ("fisheye", "focus", "magnified", "rolling"):
+    if view_mode in ("top_magnified", "magnified", "focus", "fisheye"):
         today = datetime.date.today()
         start_mode = layout.get("start_day", "sunday").lower()
 
@@ -139,20 +140,22 @@ def render_composite(config=None):
             idx = (today.weekday() + 1) % 7
             start_curr_week = today - datetime.timedelta(days=idx)
 
-        # Generate 5 rolling weeks: -2, -1, 0 (Center), +1, +2
-        rolling_weeks = []
-        for offset in [-2, -1, 0, 1, 2]:
+        active_week_days = [start_curr_week + datetime.timedelta(days=d) for d in range(7)]
+
+        # 2 upcoming preview weeks below: Week +1 and Week +2
+        preview_weeks = []
+        for offset in [1, 2]:
             w_start = start_curr_week + datetime.timedelta(weeks=offset)
             w_days = [w_start + datetime.timedelta(days=d) for d in range(7)]
-            rolling_weeks.append(w_days)
+            preview_weeks.append(w_days)
 
-        start_date = rolling_weeks[0][0]
-        end_date = rolling_weeks[-1][-1]
+        start_date = active_week_days[0]
+        end_date = preview_weeks[-1][-1]
 
         events_by_day, is_sample = aggregate_calendars(config, start_date, end_date)
 
-        svg_str, card_x, card_y, card_w, card_h = generate_fisheye_svg(
-            canvas_w, canvas_h, config, rolling_weeks, events_by_day, is_sample_data=is_sample
+        svg_str, card_x, card_y, card_w, card_h = generate_top_magnified_svg(
+            canvas_w, canvas_h, config, active_week_days, preview_weeks, events_by_day, is_sample_data=is_sample
         )
 
     elif view_mode == "month":
