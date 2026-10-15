@@ -23,6 +23,7 @@ DEFAULT_CONFIG = {
         "position": "center",   # 'center', 'bottom', 'top'
         "width_percent": 92,     # Width as % of screen width
         "height_percent": 78,    # Height as % of screen height
+        "view": "week",        # "week" or "month"
         "start_day": "sunday",   # Always start on Sunday
         "days_count": 7,         # 7 days (Sun - Sat)
         "time_format": "12h",    # '12h' (AM/PM) or '24h'

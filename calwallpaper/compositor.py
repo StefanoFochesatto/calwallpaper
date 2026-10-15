@@ -1,5 +1,6 @@
 """
 Compositor: blurs wallpaper under the card, rasterizes SVG, and blends them into the final wallpaper.
+Supports both Weekly and Monthly view modes.
 Alternates between output slots (wallpaper_a.png and wallpaper_b.png) to force KDE Plasma texture
 cache invalidation, while ensuring disk usage never accumulates.
 """
@@ -8,12 +9,13 @@ import os
 import io
 import glob
 import datetime
+import calendar
 import cairosvg
 from PIL import Image, ImageFilter, ImageDraw
 
 from .config import load_config, get_current_plasma_wallpaper, CACHE_DIR
 from .fetcher import aggregate_calendars
-from .designer import generate_weekly_svg
+from .designer import generate_weekly_svg, generate_monthly_svg
 
 SLOT_FILE = os.path.join(CACHE_DIR, "current_slot.txt")
 
@@ -50,7 +52,7 @@ def get_next_output_path():
 
 
 def compute_date_range(config):
-    """Compute start and end date based on layout configuration."""
+    """Compute start and end date based on layout configuration (weekly)."""
     layout = config.get("layout", {})
     start_mode = layout.get("start_day", "sunday").lower()
     days_count = layout.get("days_count", 7)
@@ -110,10 +112,11 @@ def render_composite(config=None):
     """
     Main pipeline:
     1. Loads base wallpaper
-    2. Fetches calendar events
-    3. Builds SVG & renders to PNG
-    4. Applies frosted-glass blur behind card
-    5. Composites and saves output to next alternating slot
+    2. Determines view mode (week vs month)
+    3. Fetches calendar events for view range
+    4. Builds SVG & renders to PNG
+    5. Applies frosted-glass blur behind card
+    6. Composites and saves output to next alternating slot
     """
     if config is None:
         config = load_config()
@@ -121,30 +124,44 @@ def render_composite(config=None):
     base_img, source_path = load_base_image(config)
     canvas_w, canvas_h = base_img.size
 
-    start_date, end_date, today = compute_date_range(config)
+    layout = config.get("layout", {})
+    view_mode = layout.get("view", "week").lower()
 
-    # 1. Fetch & parse events
-    events_by_day, is_sample = aggregate_calendars(config, start_date, end_date)
+    if view_mode == "month":
+        today = datetime.date.today()
+        start_mode = layout.get("start_day", "sunday").lower()
+        first_weekday = 6 if start_mode == "sunday" else 0
+        cal = calendar.Calendar(firstweekday=first_weekday)
+        month_weeks = cal.monthdatescalendar(today.year, today.month)
+        start_date = month_weeks[0][0]
+        end_date = month_weeks[-1][-1]
 
-    # 2. Prepare day info objects
-    days_data = []
-    curr = start_date
-    while curr <= end_date:
-        key = curr.strftime("%Y-%m-%d")
-        days_data.append({
-            "date": curr,
-            "date_str": key,
-            "is_today": (curr == today),
-            "events": events_by_day.get(key, [])
-        })
-        curr += datetime.timedelta(days=1)
+        events_by_day, is_sample = aggregate_calendars(config, start_date, end_date)
 
-    # 3. Generate SVG
-    svg_str, card_x, card_y, card_w, card_h = generate_weekly_svg(
-        canvas_w, canvas_h, config, days_data, is_sample_data=is_sample
-    )
+        svg_str, card_x, card_y, card_w, card_h = generate_monthly_svg(
+            canvas_w, canvas_h, config, month_weeks, events_by_day, is_sample_data=is_sample
+        )
+    else:  # "week"
+        start_date, end_date, today = compute_date_range(config)
+        events_by_day, is_sample = aggregate_calendars(config, start_date, end_date)
 
-    # 4. Rasterize SVG using cairosvg
+        days_data = []
+        curr = start_date
+        while curr <= end_date:
+            key = curr.strftime("%Y-%m-%d")
+            days_data.append({
+                "date": curr,
+                "date_str": key,
+                "is_today": (curr == today),
+                "events": events_by_day.get(key, [])
+            })
+            curr += datetime.timedelta(days=1)
+
+        svg_str, card_x, card_y, card_w, card_h = generate_weekly_svg(
+            canvas_w, canvas_h, config, days_data, is_sample_data=is_sample
+        )
+
+    # Rasterize SVG using cairosvg
     png_bytes = cairosvg.svg2png(
         bytestring=svg_str.encode("utf-8"),
         parent_width=canvas_w,
@@ -154,7 +171,7 @@ def render_composite(config=None):
     )
     svg_layer = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
 
-    # 5. Frosted glass effect: blur wallpaper region behind the card
+    # Frosted glass blur
     blur_radius = config.get("wallpaper", {}).get("blur_radius", 32)
     if blur_radius > 0:
         scaled_radius = int(blur_radius * (canvas_w / 1920.0))
@@ -181,10 +198,8 @@ def render_composite(config=None):
 
         base_img.paste(card_blur, (card_x, card_y), mask=mask)
 
-    # 6. Composite the rendered SVG layer over the base
     final_img = Image.alpha_composite(base_img, svg_layer)
 
-    # 7. Convert to RGB and save to next alternating slot
     os.makedirs(CACHE_DIR, exist_ok=True)
     out_path = get_next_output_path()
     rgb_output = final_img.convert("RGB")

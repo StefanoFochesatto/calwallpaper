@@ -12,6 +12,7 @@ layout:
   position: center             # 'center', 'top', or 'bottom'
   width_percent: 82            # Card width as % of screen width (gives balanced horizontal padding)
   height_percent: 74           # Card height as % of screen height (gives equal top & bottom padding)
+  view: week                 # 'week' (hourly time-blocks) or 'month' (full month calendar)
   start_day: sunday            # 'sunday', 'monday', or 'today'
   days_count: 7                # Number of days to display
   time_format: 12h             # '12h' (AM/PM) or '24h'

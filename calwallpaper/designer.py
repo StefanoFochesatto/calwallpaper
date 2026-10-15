@@ -1,11 +1,11 @@
 """
-Google Calendar-style weekly grid SVG generator for calwallpaper.
-Includes dual timezone column, 12h AM/PM format, Sunday-start week,
-and proportional hourly event placement.
+SVG visual generator for calwallpaper.
+Supports both Google Calendar-style Weekly Grid view and Monthly Calendar view.
 """
 
 import html
 import datetime
+import calendar
 from zoneinfo import ZoneInfo
 
 
@@ -89,10 +89,12 @@ def assign_event_slots(events):
     return results
 
 
+# =========================================================================
+# 1. WEEKLY GRID VIEW
+# =========================================================================
+
 def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=False):
-    """
-    Generate Google Calendar-style weekly grid SVG without static frozen clock/line.
-    """
+    """Generate Google Calendar-style weekly grid SVG."""
     layout = config.get("layout", {})
     wallpaper_cfg = config.get("wallpaper", {})
     tz_cfg = config.get("timezones", {})
@@ -116,7 +118,6 @@ def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=Fa
 
     font_family = "system-ui, -apple-system, 'Cantarell', 'DejaVu Sans', sans-serif"
 
-    # Timezones
     primary_tz_name = tz_cfg.get("primary", "America/Denver")
     primary_label = tz_cfg.get("primary_label", "MDT")
     secondary_tz_name = tz_cfg.get("secondary", "America/Anchorage")
@@ -133,9 +134,8 @@ def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=Fa
         secondary_tz = ZoneInfo("America/Anchorage")
 
     now = datetime.datetime.now(primary_tz)
-    full_month_str = now.strftime("%B %Y")  # e.g. October 2026
+    full_month_str = now.strftime("%B %Y")
 
-    # Determine Grid Hours
     grid_start_h = grid_cfg.get("start", 7)
     grid_end_h = grid_cfg.get("end", 21)
 
@@ -150,23 +150,19 @@ def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=Fa
     total_hours = grid_end_h - grid_start_h
     total_grid_minutes = total_hours * 60
 
-    # Layout measurements
     pad_x = int(24 * scale)
     pad_top = int(20 * scale)
     pad_bottom = int(20 * scale)
 
     header_h = int(54 * scale)
 
-    # Dual Timezone Gutter on the left
     gutter_w = int(110 * scale)
     sub_col_w = gutter_w // 2
 
-    # Day columns
     num_days = len(days_data)
     grid_w = card_w - (pad_x * 2) - gutter_w
     col_w = grid_w // num_days
 
-    # Day header row (Dates and Days)
     day_header_h = int(58 * scale)
 
     all_day_events_exist = any(any(e.get("all_day", False) for e in d["events"]) for d in days_data)
@@ -192,22 +188,18 @@ def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=Fa
 
     svg.append(f'<g transform="translate({card_x}, {card_y})" filter="url(#cardGlow)">')
 
-    # Card Background with rounded corners
     rx = int(22 * scale)
     svg.append(f'<rect x="0" y="0" width="{card_w}" height="{card_h}" rx="{rx}" fill="{tint}" fill-opacity="{opacity}" stroke="{border_color}" stroke-width="{max(1, int(1.5 * scale))}"/>')
     svg.append(f'<rect x="0" y="0" width="{card_w}" height="{int(card_h * 0.25)}" rx="{rx}" fill="url(#headerShine)"/>')
 
-    # ================= TOP HEADER =================
     header_font_size = int(24 * scale)
     svg.append(f'<text x="{pad_x}" y="{pad_top + header_font_size}" font-family="{font_family}" font-size="{header_font_size}" font-weight="700" fill="#f8fafc" letter-spacing="-0.5">{escape(full_month_str)}</text>')
 
-    # Date range subtitle
     start_d = days_data[0]["date"].strftime("%b %-d")
     end_d = days_data[-1]["date"].strftime("%b %-d, %Y")
     sub_font_size = int(13 * scale)
     svg.append(f'<text x="{pad_x}" y="{pad_top + header_font_size + int(18 * scale)}" font-family="{font_family}" font-size="{sub_font_size}" font-weight="500" fill="#94a3b8">{escape(start_d)} – {escape(end_d)} · Weekly Schedule</text>')
 
-    # Right side: Calendar Legend Badges (prominent and clean)
     active_cals = [c for c in config.get("calendars", []) if c.get("enabled", True) and (c.get("url") or c.get("path"))]
     legend_y = pad_top + header_font_size
     cur_legend_x = card_w - pad_x
@@ -220,44 +212,35 @@ def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=Fa
         svg.append(f'<text x="{cur_legend_x + int(16 * scale)}" y="{legend_y - int(2 * scale)}" font-family="{font_family}" font-size="{int(12.5 * scale)}" fill="#e2e8f0" font-weight="600">{escape(name)}</text>')
         cur_legend_x -= int(12 * scale)
 
-    # Header bottom divider
     sep_y = pad_top + header_h
     svg.append(f'<line x1="{pad_x}" y1="{sep_y}" x2="{card_w - pad_x}" y2="{sep_y}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
 
-    # ================= DUAL TIMEZONE GUTTER HEADER =================
     gutter_x = pad_x
     day_header_y = sep_y + int(6 * scale)
 
-    # Sub-column 1 Header (Secondary: AKDT)
     tz1_center_x = gutter_x + (sub_col_w // 2)
     svg.append(f'<text x="{tz1_center_x}" y="{day_header_y + int(24 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(11 * scale)}" font-weight="700" fill="#64748b" letter-spacing="0.5">{escape(secondary_label)}</text>')
     svg.append(f'<text x="{tz1_center_x}" y="{day_header_y + int(40 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(9.5 * scale)}" font-weight="500" fill="#475569">GMT-8</text>')
 
-    # Sub-column 2 Header (Primary: MDT)
     tz2_center_x = gutter_x + sub_col_w + (sub_col_w // 2)
     svg.append(f'<text x="{tz2_center_x}" y="{day_header_y + int(24 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(11 * scale)}" font-weight="700" fill="#38bdf8" letter-spacing="0.5">{escape(primary_label)}</text>')
     svg.append(f'<text x="{tz2_center_x}" y="{day_header_y + int(40 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(9.5 * scale)}" font-weight="500" fill="#0284c7">GMT-6</text>')
 
-    # Gutter divider lines
     svg.append(f'<line x1="{gutter_x + sub_col_w}" y1="{day_header_y + int(10 * scale)}" x2="{gutter_x + sub_col_w}" y2="{grid_top_y + grid_h}" stroke="rgba(255, 255, 255, 0.05)" stroke-width="1"/>')
     svg.append(f'<line x1="{gutter_x + gutter_w}" y1="{day_header_y}" x2="{gutter_x + gutter_w}" y2="{grid_top_y + grid_h}" stroke="rgba(255, 255, 255, 0.12)" stroke-width="1.2"/>')
 
-    # ================= DAY HEADERS (Google Calendar Style) =================
     for i, day_info in enumerate(days_data):
         col_x = gutter_x + gutter_w + (i * col_w)
         d_obj = day_info["date"]
         is_today = day_info["is_today"]
 
-        day_name = d_obj.strftime("%a").upper()  # SUN, MON...
-        day_num = d_obj.strftime("%-d")          # 11, 12...
+        day_name = d_obj.strftime("%a").upper()
+        day_num = d_obj.strftime("%-d")
 
         center_x = col_x + (col_w // 2)
-
-        # Day Name
         name_color = "#3b82f6" if is_today else "#94a3b8"
         svg.append(f'<text x="{center_x}" y="{day_header_y + int(18 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(12 * scale)}" font-weight="600" fill="{name_color}" letter-spacing="0.5">{escape(day_name)}</text>')
 
-        # Date Number
         num_y = day_header_y + int(40 * scale)
         if is_today:
             circle_r = int(15 * scale)
@@ -266,14 +249,11 @@ def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=Fa
         else:
             svg.append(f'<text x="{center_x}" y="{num_y + int(1 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(15 * scale)}" font-weight="600" fill="#e2e8f0">{escape(day_num)}</text>')
 
-        # Vertical line separating days
         if i > 0:
             svg.append(f'<line x1="{col_x}" y1="{day_header_y}" x2="{col_x}" y2="{grid_top_y + grid_h}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
 
-    # Horizontal divider under day headers
     svg.append(f'<line x1="{gutter_x}" y1="{grid_top_y}" x2="{card_w - pad_x}" y2="{grid_top_y}" stroke="rgba(255, 255, 255, 0.12)" stroke-width="1.2"/>')
 
-    # ================= ALL-DAY EVENTS ROW =================
     if all_day_events_exist:
         for i, day_info in enumerate(days_data):
             col_x = gutter_x + gutter_w + (i * col_w)
@@ -287,7 +267,6 @@ def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=Fa
                 svg.append(f'<rect x="{b_x}" y="{b_y}" width="{b_w}" height="{b_h}" rx="{int(4 * scale)}" fill="{color}" fill-opacity="0.85"/>')
                 svg.append(f'<text x="{b_x + int(6 * scale)}" y="{b_y + int(16 * scale)}" font-family="{font_family}" font-size="{int(10.5 * scale)}" font-weight="600" fill="#ffffff">{escape(truncate(ev.get("title", ""), int(col_w / (9 * scale))))}</text>')
 
-    # ================= HOURLY GRID & TIME GUTTER =================
     today_ref = datetime.date.today()
 
     for h_idx in range(total_hours + 1):
@@ -309,7 +288,6 @@ def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=Fa
             svg.append(f'<text x="{tz1_center_x}" y="{text_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(10.5 * scale)}" font-weight="500" fill="#64748b">{escape(time_str_secondary)}</text>')
             svg.append(f'<text x="{tz2_center_x}" y="{text_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(11 * scale)}" font-weight="600" fill="#94a3b8">{escape(time_str_primary)}</text>')
 
-    # ================= TIMED EVENTS RENDERING =================
     min_grid_m = grid_start_h * 60
     max_grid_m = grid_end_h * 60
 
@@ -358,7 +336,206 @@ def generate_weekly_svg(canvas_w, canvas_h, config, days_data, is_sample_data=Fa
             else:
                 svg.append(f'<text x="{text_pad_x}" y="{ev_y + int(15 * scale)}" font-family="{font_family}" font-size="{int(10.5 * scale)}" font-weight="700" fill="#ffffff">{escape(truncate(title, max_char_len))}</text>')
 
-    svg.append('</g>')  # End Card Group
+    svg.append('</g>')
+    svg.append('</svg>')
+
+    return "\n".join(svg), card_x, card_y, card_w, card_h
+
+
+# =========================================================================
+# 2. MONTHLY CALENDAR VIEW
+# =========================================================================
+
+def generate_monthly_svg(canvas_w, canvas_h, config, month_weeks, events_by_day, is_sample_data=False):
+    """
+    Generate Google Calendar-style full Monthly Calendar Grid SVG.
+    month_weeks: list of lists of datetime.date objects (e.g. 5 weeks of 7 days).
+    events_by_day: dict mapping 'YYYY-MM-DD' to list of event dicts.
+    """
+    layout = config.get("layout", {})
+    wallpaper_cfg = config.get("wallpaper", {})
+
+    w_pct = layout.get("width_percent", 84) / 100.0
+    h_pct = layout.get("height_percent", 78) / 100.0
+
+    card_w = int(canvas_w * w_pct)
+    card_h = int(canvas_h * h_pct)
+
+    card_x = (canvas_w - card_w) // 2
+    card_y = (canvas_h - card_h) // 2
+
+    scale = canvas_w / 1920.0
+    scale = max(0.8, min(scale, 2.2))
+
+    tint = wallpaper_cfg.get("card_tint", "#080c14")
+    opacity = wallpaper_cfg.get("card_opacity", 0.62)
+    border_color = wallpaper_cfg.get("border_color", "rgba(255, 255, 255, 0.16)")
+
+    font_family = "system-ui, -apple-system, 'Cantarell', 'DejaVu Sans', sans-serif"
+
+    today = datetime.date.today()
+    target_month = today.month
+    target_year = today.year
+
+    month_title = today.strftime("%B %Y")  # e.g. October 2026
+
+    pad_x = int(24 * scale)
+    pad_top = int(20 * scale)
+    pad_bottom = int(20 * scale)
+
+    header_h = int(54 * scale)
+    day_header_h = int(32 * scale)
+
+    num_weeks = len(month_weeks)
+    num_cols = 7
+
+    grid_w = card_w - (pad_x * 2)
+    grid_top_y = pad_top + header_h + day_header_h
+    grid_h = card_h - grid_top_y - pad_bottom
+
+    col_w = grid_w // num_cols
+    row_h = grid_h / float(num_weeks)
+
+    svg = []
+    svg.append(f'<svg width="{canvas_w}" height="{canvas_h}" viewBox="0 0 {canvas_w} {canvas_h}" xmlns="http://www.w3.org/2000/svg">')
+    svg.append('<defs>')
+    svg.append("""
+      <filter id="cardGlow" x="-5%" y="-5%" width="110%" height="110%">
+        <feDropShadow dx="0" dy="10" stdDeviation="20" flood-color="#000000" flood-opacity="0.5"/>
+      </filter>
+      <linearGradient id="headerShine" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.06"/>
+        <stop offset="100%" stop-color="#ffffff" stop-opacity="0.00"/>
+      </linearGradient>
+    """)
+    svg.append('</defs>')
+
+    svg.append(f'<g transform="translate({card_x}, {card_y})" filter="url(#cardGlow)">')
+
+    rx = int(22 * scale)
+    svg.append(f'<rect x="0" y="0" width="{card_w}" height="{card_h}" rx="{rx}" fill="{tint}" fill-opacity="{opacity}" stroke="{border_color}" stroke-width="{max(1, int(1.5 * scale))}"/>')
+    svg.append(f'<rect x="0" y="0" width="{card_w}" height="{int(card_h * 0.22)}" rx="{rx}" fill="url(#headerShine)"/>')
+
+    # ================= TOP HEADER =================
+    header_font_size = int(25 * scale)
+    svg.append(f'<text x="{pad_x}" y="{pad_top + header_font_size}" font-family="{font_family}" font-size="{header_font_size}" font-weight="700" fill="#f8fafc" letter-spacing="-0.5">{escape(month_title)}</text>')
+
+    total_events = sum(len(evs) for evs in events_by_day.values())
+    sub_font_size = int(13 * scale)
+    svg.append(f'<text x="{pad_x}" y="{pad_top + header_font_size + int(18 * scale)}" font-family="{font_family}" font-size="{sub_font_size}" font-weight="500" fill="#94a3b8">{total_events} Events · Monthly Calendar</text>')
+
+    # Legend Badges on Right
+    active_cals = [c for c in config.get("calendars", []) if c.get("enabled", True) and (c.get("url") or c.get("path"))]
+    legend_y = pad_top + header_font_size
+    cur_legend_x = card_w - pad_x
+    for cal in reversed(active_cals):
+        name = truncate(cal.get("name", "Cal"), 20)
+        col = cal.get("color", "#38bdf8")
+        approx_w = int(len(name) * 8 * scale) + int(26 * scale)
+        cur_legend_x -= approx_w
+        svg.append(f'<circle cx="{cur_legend_x + int(6 * scale)}" cy="{legend_y - int(6 * scale)}" r="{int(5 * scale)}" fill="{col}"/>')
+        svg.append(f'<text x="{cur_legend_x + int(16 * scale)}" y="{legend_y - int(2 * scale)}" font-family="{font_family}" font-size="{int(12.5 * scale)}" fill="#e2e8f0" font-weight="600">{escape(name)}</text>')
+        cur_legend_x -= int(12 * scale)
+
+    sep_y = pad_top + header_h
+    svg.append(f'<line x1="{pad_x}" y1="{sep_y}" x2="{card_w - pad_x}" y2="{sep_y}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
+
+    # ================= DAY NAMES HEADER ROW =================
+    start_mode = layout.get("start_day", "sunday").lower()
+    if start_mode == "monday":
+        day_names = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+    else:
+        day_names = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"]
+
+    day_header_y = sep_y + int(4 * scale)
+    for c_idx, d_name in enumerate(day_names):
+        c_x = pad_x + (c_idx * col_w)
+        center_x = c_x + (col_w // 2)
+        svg.append(f'<text x="{center_x}" y="{day_header_y + int(18 * scale)}" text-anchor="middle" font-family="{font_family}" font-size="{int(12 * scale)}" font-weight="600" fill="#94a3b8" letter-spacing="0.5">{escape(d_name)}</text>')
+
+    svg.append(f'<line x1="{pad_x}" y1="{grid_top_y}" x2="{card_w - pad_x}" y2="{grid_top_y}" stroke="rgba(255, 255, 255, 0.12)" stroke-width="1.2"/>')
+
+    # ================= MONTH GRID CELLS =================
+    for r_idx, week in enumerate(month_weeks):
+        cell_y = grid_top_y + (r_idx * row_h)
+
+        # Horizontal week line
+        if r_idx > 0:
+            svg.append(f'<line x1="{pad_x}" y1="{cell_y}" x2="{card_w - pad_x}" y2="{cell_y}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
+
+        for c_idx, d_obj in enumerate(week):
+            cell_x = pad_x + (c_idx * col_w)
+            is_today = (d_obj == today)
+            is_in_month = (d_obj.month == target_month)
+
+            # Vertical separator line
+            if c_idx > 0 and r_idx == 0:
+                svg.append(f'<line x1="{cell_x}" y1="{grid_top_y}" x2="{cell_x}" y2="{grid_top_y + grid_h}" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>')
+
+            # Today cell subtle highlight
+            if is_today:
+                svg.append(f'<rect x="{cell_x + 1}" y="{cell_y + 1}" width="{col_w - 2}" height="{int(row_h) - 2}" fill="rgba(37, 99, 235, 0.09)"/>')
+
+            # Date number (Top Center of cell)
+            date_num_str = str(d_obj.day)
+            num_center_x = cell_x + (col_w // 2)
+            num_y = cell_y + int(20 * scale)
+
+            if is_today:
+                # Blue filled circle for today
+                circle_r = int(12 * scale)
+                svg.append(f'<circle cx="{num_center_x}" cy="{num_y - int(4 * scale)}" r="{circle_r}" fill="#2563eb"/>')
+                svg.append(f'<text x="{num_center_x}" y="{num_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(12 * scale)}" font-weight="700" fill="#ffffff">{escape(date_num_str)}</text>')
+            elif is_in_month:
+                svg.append(f'<text x="{num_center_x}" y="{num_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(12 * scale)}" font-weight="600" fill="#e2e8f0">{escape(date_num_str)}</text>')
+            else:
+                # Outside month (grayed out)
+                svg.append(f'<text x="{num_center_x}" y="{num_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(12 * scale)}" font-weight="500" fill="#475569">{escape(date_num_str)}</text>')
+
+            # Events in cell
+            date_key = d_obj.strftime("%Y-%m-%d")
+            cell_events = events_by_day.get(date_key, [])
+
+            chip_h = int(22 * scale)
+            chip_gap = int(4 * scale)
+            chips_start_y = cell_y + int(30 * scale)
+
+            avail_h = row_h - int(34 * scale)
+            max_chips_fit = max(1, int(avail_h // (chip_h + chip_gap)))
+
+            rendered_chips = cell_events[:max_chips_fit]
+            overflow = len(cell_events) - max_chips_fit
+
+            for ev_i, ev in enumerate(rendered_chips):
+                ey = chips_start_y + (ev_i * (chip_h + chip_gap))
+                ew = col_w - int(10 * scale)
+                ex = cell_x + int(5 * scale)
+                erx = int(4 * scale)
+
+                color = ev.get("color", "#38bdf8")
+                title = ev.get("title", "Event")
+                time_str = ev.get("start_time_str", "")
+
+                if time_str and time_str != "All Day":
+                    chip_text = f"{time_str} {title}"
+                else:
+                    chip_text = title
+
+                max_chars = max(8, int(ew / (7.2 * scale)))
+                display_text = truncate(chip_text, max_chars)
+
+                # Event pill
+                svg.append(f'<rect x="{ex}" y="{ey}" width="{ew}" height="{chip_h}" rx="{erx}" fill="{color}" fill-opacity="0.80"/>')
+                # Left accent border
+                svg.append(f'<rect x="{ex}" y="{ey}" width="{int(3 * scale)}" height="{chip_h}" rx="{int(1.5 * scale)}" fill="#ffffff" fill-opacity="0.6"/>')
+                # Text inside pill
+                svg.append(f'<text x="{ex + int(6 * scale)}" y="{ey + int(15 * scale)}" font-family="{font_family}" font-size="{int(10.5 * scale)}" font-weight="600" fill="#ffffff">{escape(display_text)}</text>')
+
+            if overflow > 0:
+                more_y = chips_start_y + (max_chips_fit * (chip_h + chip_gap)) + int(11 * scale)
+                svg.append(f'<text x="{num_center_x}" y="{more_y}" text-anchor="middle" font-family="{font_family}" font-size="{int(10 * scale)}" font-weight="600" fill="#94a3b8">+{overflow} more</text>')
+
+    svg.append('</g>')
     svg.append('</svg>')
 
     return "\n".join(svg), card_x, card_y, card_w, card_h
