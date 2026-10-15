@@ -1,8 +1,9 @@
 """
 Compositor: blurs wallpaper under the card, rasterizes SVG, and blends them into the final wallpaper.
-Supports both Weekly and Monthly view modes.
-Alternates between output slots (wallpaper_a.png and wallpaper_b.png) to force KDE Plasma texture
-cache invalidation, while ensuring disk usage never accumulates.
+Supports:
+1. Fisheye / Focus View: 5-week rolling calendar where the center row is the magnified active week.
+2. Weekly View: Google Calendar-style time grid with dual timezone gutter.
+3. Monthly View: Standalone full month grid with daily event cards.
 """
 
 import os
@@ -15,7 +16,7 @@ from PIL import Image, ImageFilter, ImageDraw
 
 from .config import load_config, get_current_plasma_wallpaper, CACHE_DIR
 from .fetcher import aggregate_calendars
-from .designer import generate_weekly_svg, generate_monthly_svg
+from .designer import generate_weekly_svg, generate_monthly_svg, generate_fisheye_svg
 
 SLOT_FILE = os.path.join(CACHE_DIR, "current_slot.txt")
 
@@ -33,7 +34,7 @@ def cleanup_old_cache_images():
 
 
 def get_next_output_path():
-    """Alternate strictly between wallpaper_a.png and wallpaper_b.png (max 2 files ever)."""
+    """Alternate strictly between wallpaper_a.png and wallpaper_b.png."""
     cleanup_old_cache_images()
 
     slot = "a"
@@ -112,7 +113,7 @@ def render_composite(config=None):
     """
     Main pipeline:
     1. Loads base wallpaper
-    2. Determines view mode (week vs month)
+    2. Determines view mode (fisheye vs week vs month)
     3. Fetches calendar events for view range
     4. Builds SVG & renders to PNG
     5. Applies frosted-glass blur behind card
@@ -125,9 +126,36 @@ def render_composite(config=None):
     canvas_w, canvas_h = base_img.size
 
     layout = config.get("layout", {})
-    view_mode = layout.get("view", "week").lower()
+    view_mode = layout.get("view", "fisheye").lower()
 
-    if view_mode == "month":
+    if view_mode in ("fisheye", "focus", "magnified", "rolling"):
+        today = datetime.date.today()
+        start_mode = layout.get("start_day", "sunday").lower()
+
+        # Sunday of current week (or Monday if configured)
+        if start_mode == "monday":
+            start_curr_week = today - datetime.timedelta(days=today.weekday())
+        else:  # Sunday
+            idx = (today.weekday() + 1) % 7
+            start_curr_week = today - datetime.timedelta(days=idx)
+
+        # Generate 5 rolling weeks: -2, -1, 0 (Center), +1, +2
+        rolling_weeks = []
+        for offset in [-2, -1, 0, 1, 2]:
+            w_start = start_curr_week + datetime.timedelta(weeks=offset)
+            w_days = [w_start + datetime.timedelta(days=d) for d in range(7)]
+            rolling_weeks.append(w_days)
+
+        start_date = rolling_weeks[0][0]
+        end_date = rolling_weeks[-1][-1]
+
+        events_by_day, is_sample = aggregate_calendars(config, start_date, end_date)
+
+        svg_str, card_x, card_y, card_w, card_h = generate_fisheye_svg(
+            canvas_w, canvas_h, config, rolling_weeks, events_by_day, is_sample_data=is_sample
+        )
+
+    elif view_mode == "month":
         today = datetime.date.today()
         start_mode = layout.get("start_day", "sunday").lower()
         first_weekday = 6 if start_mode == "sunday" else 0
@@ -171,7 +199,7 @@ def render_composite(config=None):
     )
     svg_layer = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
 
-    # Frosted glass blur
+    # Frosted glass blur behind card
     blur_radius = config.get("wallpaper", {}).get("blur_radius", 32)
     if blur_radius > 0:
         scaled_radius = int(blur_radius * (canvas_w / 1920.0))

@@ -209,7 +209,7 @@ class CalWallpaperSettingsWindow(QMainWindow):
         week_form = QFormLayout(week_group)
 
         self.combo_view_mode = QComboBox()
-        self.combo_view_mode.addItems(["Weekly Grid (Time Blocks)", "Monthly Calendar (Full Month)"])
+        self.combo_view_mode.addItems(["Magnified Focus (Center Week Magnified + Squeezed Previews)", "Weekly Grid (Time Blocks)", "Monthly Calendar (Full Month)"])
         week_form.addRow("Calendar View Mode:", self.combo_view_mode)
 
         self.combo_start_day = QComboBox()
@@ -384,7 +384,12 @@ class CalWallpaperSettingsWindow(QMainWindow):
 
         # Grid
         view_mode = layout.get("view", "week").lower()
-        self.combo_view_mode.setCurrentIndex(0 if view_mode == "week" else 1)
+        if view_mode in ("fisheye", "focus", "magnified", "rolling"):
+            self.combo_view_mode.setCurrentIndex(0)
+        elif view_mode == "week":
+            self.combo_view_mode.setCurrentIndex(1)
+        else:
+            self.combo_view_mode.setCurrentIndex(2)
 
         start_d = layout.get("start_day", "sunday").lower()
         if start_d == "sunday":
@@ -465,7 +470,13 @@ class CalWallpaperSettingsWindow(QMainWindow):
 
         # Layout
         lay = self.config.setdefault("layout", {})
-        lay["view"] = "week" if self.combo_view_mode.currentIndex() == 0 else "month"
+        view_idx = self.combo_view_mode.currentIndex()
+        if view_idx == 0:
+            lay["view"] = "fisheye"
+        elif view_idx == 1:
+            lay["view"] = "week"
+        else:
+            lay["view"] = "month"
         lay["width_percent"] = self.slider_width.value()
         lay["height_percent"] = self.slider_height.value()
         lay["position"] = self.combo_pos.currentText()
